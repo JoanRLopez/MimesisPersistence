@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <Import Project="$(MSBuildThisFileDirectory)PathConfig.props" Condition="Exists('$(MSBuildThisFileDirectory)PathConfig.props')" />
+
+  <Target Name="ValidatePathConfig" BeforeTargets="ResolveReferences">
+      <Error 
+      Condition="'$(GamePath)' == '' OR !Exists('$(GamePath)')" 
+      Text="GamePath not configured. Copy PathConfig.props.example to PathConfig.props and set your local paths." />
+    <Error 
+      Condition="'$(GameManagedPath)' == '' OR !Exists('$(GameManagedPath)')" 
+      Text="GameManagedPath not configured or does not exist." />
+    <Error 
+      Condition="'$(MelonLoaderPath)' == '' OR !Exists('$(MelonLoaderPath)')" 
+      Text="MelonLoaderPath not configured or does not exist." />
+  </Target>
+</Project>

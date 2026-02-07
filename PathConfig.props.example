@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copy this file to PathConfig.props and set your local paths. -->
+<Project>
+  <PropertyGroup>
+    <!-- Game installation folder (where MIMESIS.exe is located) -->
+    <GamePath>D:\Games\Mimesis</GamePath>
+    <GameManagedPath>$(GamePath)\MIMESIS_Data\Managed</GameManagedPath>
+    <MelonLoaderPath>$(GamePath)\MelonLoader\net35</MelonLoaderPath>
+  </PropertyGroup>
+</Project>
