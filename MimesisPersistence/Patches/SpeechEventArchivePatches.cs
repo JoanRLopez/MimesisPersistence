@@ -51,9 +51,31 @@ namespace MimesisPersistence.Patches
                     SpeechEventPoolManager.SetLocalArchive(__instance);
                 }
 
-                string playerId = __instance.PlayerId;
-                long playerUID = __instance.PlayerUID;
-                bool isLocal = __instance.IsLocal;
+                string playerId = null;
+                long playerUID = 0;
+                bool isLocal = false;
+
+                try
+                {
+                    playerId = __instance.PlayerId;
+                    playerUID = __instance.PlayerUID;
+                    isLocal = __instance.IsLocal;
+                }
+                catch { /* Player component may not be ready yet */ }
+
+                // If this is a remote player whose SyncVars haven't synced yet,
+                // defer the injection to ProcessDeferredUpdates (runs every frame).
+                // FishNet SyncVars (PlayerId, PlayerUID) arrive after OnStartClient for remotes.
+                if (!isLocal && string.IsNullOrEmpty(playerId) && playerUID == 0)
+                {
+                    bool hasDataToInject = SpeechEventPoolManager.HasPending() ||
+                                           SpeechEventPoolManager.DisconnectedCacheCount > 0;
+                    if (hasDataToInject)
+                    {
+                        SpeechEventPoolManager.RegisterDeferredInjection(__instance);
+                    }
+                    return;
+                }
 
                 var eventsList = __instance.events;
                 if (eventsList == null) return;

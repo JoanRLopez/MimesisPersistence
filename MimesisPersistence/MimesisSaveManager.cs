@@ -261,9 +261,24 @@ namespace MimesisPersistence
                     }
                 }
 
-                if (disconnectedAdded > 0)
+                // 3. Include PENDING events from the pool (loaded from disk but never matched).
+                // These belong to players who didn't join this session.
+                // Without this, their voices would be lost after one session without them.
+                var pending = SpeechEventPoolManager.GetPendingEvents();
+                int pendingAdded = 0;
+                foreach (var ev in pending)
                 {
-                    MelonLoader.MelonLogger.Msg($"[MimesisPersistence] CollectAllSpeechEvents: {liveCount} from live archives + {disconnectedAdded} from disconnected cache = {list.Count} total");
+                    if (ev != null && seenIds.Add(ev.Id))
+                    {
+                        list.Add(ev);
+                        pendingAdded++;
+                    }
+                }
+
+                if (disconnectedAdded > 0 || pendingAdded > 0)
+                {
+                    MelonLoader.MelonLogger.Msg($"[MimesisPersistence] CollectAllSpeechEvents: " +
+                        $"{liveCount} live + {disconnectedAdded} disconnected + {pendingAdded} pending (absent players) = {list.Count} total");
                 }
             }
             catch (Exception ex)

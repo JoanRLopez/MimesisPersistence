@@ -4,7 +4,7 @@ using MelonLoader;
 using UnityEngine;
 #endif
 
-[assembly: MelonInfo(typeof(MimesisPersistence.MimesisPersistenceMod), "MimesisPersistence", "0.3.0", "JoanR")]
+[assembly: MelonInfo(typeof(MimesisPersistence.MimesisPersistenceMod), "MimesisPersistence", "0.3.1", "JoanR")]
 [assembly: MelonGame(null, null)]
 
 namespace MimesisPersistence

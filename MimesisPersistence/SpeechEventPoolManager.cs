@@ -44,6 +44,12 @@ namespace MimesisPersistence
         private static readonly List<(SpeechEventArchive archive, List<SpeechEvent> events)> _deferredNameUpdates
             = new List<(SpeechEventArchive, List<SpeechEvent>)>();
 
+        // Deferred injection: archives whose PlayerId/PlayerUID weren't available at OnStartClient.
+        // Happens for remote players because FishNet SyncVars haven't synced yet.
+        // ProcessDeferredUpdates will retry when the data becomes available.
+        private static readonly List<SpeechEventArchive> _deferredInjectionArchives
+            = new List<SpeechEventArchive>();
+
         // ===================== Disconnected Player Cache =====================
         // Caches SpeechEvents from players who disconnect mid-session (before save).
         // Without this, their SpeechEventArchive (NetworkObject) gets destroyed
@@ -305,12 +311,117 @@ namespace MimesisPersistence
         }
 
         /// <summary>
-        /// Process deferred PlayerName updates.
-        /// Called from MimesisPersistenceMod.OnUpdate() every frame.
-        /// Checks if any archive's PlayerId has become available since injection.
+        /// Register an archive for deferred injection. Called when OnStartClient fires
+        /// but PlayerId/PlayerUID aren't available yet (remote player SyncVars not synced).
+        /// </summary>
+        public static void RegisterDeferredInjection(SpeechEventArchive archive)
+        {
+            if (archive == null) return;
+            // Avoid duplicates
+            foreach (var existing in _deferredInjectionArchives)
+                if (existing == archive) return;
+
+            _deferredInjectionArchives.Add(archive);
+            MelonLogger.Msg($"[SpeechEventPoolManager] Registered archive for deferred injection " +
+                            $"(waiting for SyncVars, {_deferredInjectionArchives.Count} pending)");
+        }
+
+        /// <summary>
+        /// Process all deferred operations. Called from MimesisPersistenceMod.OnUpdate() every frame.
+        /// 1. Deferred injections: archives waiting for PlayerId/PlayerUID to sync
+        /// 2. Deferred name updates: events injected before PlayerId was set
         /// </summary>
         public static void ProcessDeferredUpdates()
         {
+            // === Deferred injections (remote players whose SyncVars weren't ready) ===
+            if (_deferredInjectionArchives.Count > 0)
+            {
+                for (int i = _deferredInjectionArchives.Count - 1; i >= 0; i--)
+                {
+                    var archive = _deferredInjectionArchives[i];
+
+                    // Archive destroyed?
+                    if (archive == null)
+                    {
+                        _deferredInjectionArchives.RemoveAt(i);
+                        continue;
+                    }
+
+                    // Check if SyncVars have synced
+                    string playerId;
+                    long playerUID;
+                    bool isLocal;
+                    try
+                    {
+                        playerId = archive.PlayerId;
+                        playerUID = archive.PlayerUID;
+                        isLocal = archive.IsLocal;
+                    }
+                    catch { continue; } // Player not ready yet
+
+                    if (string.IsNullOrEmpty(playerId) && playerUID == 0)
+                        continue; // Still not synced, try next frame
+
+                    // SyncVars are ready! Do the full claim+inject
+                    _deferredInjectionArchives.RemoveAt(i);
+                    MelonLogger.Msg($"[SpeechEventPoolManager] Deferred injection: SyncVars ready for " +
+                                    $"PlayerId='{playerId}', PlayerUID={playerUID}");
+
+                    var eventsList = archive.events;
+                    if (eventsList == null) continue;
+
+                    float currentTime = GetCurrentSessionTime();
+                    var seenIds = new HashSet<long>();
+                    for (int j = 0; j < eventsList.Count; j++)
+                        seenIds.Add(eventsList[j].Id);
+
+                    int totalAdded = 0;
+
+                    // Source 1: Pool from disk
+                    if (HasPending())
+                    {
+                        var claimed = ClaimEventsForArchive(playerId, playerUID, isLocal, archive);
+                        if (claimed != null)
+                        {
+                            foreach (var ev in claimed)
+                            {
+                                if (ev == null || seenIds.Contains(ev.Id)) continue;
+                                FixEventTiming(ev, currentTime);
+                                eventsList.Add(ev);
+                                seenIds.Add(ev.Id);
+                                totalAdded++;
+                            }
+                        }
+                    }
+
+                    // Source 2: Disconnected cache
+                    if (_disconnectedCache.Count > 0)
+                    {
+                        var reclaimed = ClaimDisconnectedEventsForArchive(playerId, playerUID, isLocal);
+                        if (reclaimed != null)
+                        {
+                            foreach (var ev in reclaimed)
+                            {
+                                if (ev == null || seenIds.Contains(ev.Id)) continue;
+                                FixEventTiming(ev, currentTime);
+                                eventsList.Add(ev);
+                                seenIds.Add(ev.Id);
+                                totalAdded++;
+                            }
+                        }
+                    }
+
+                    if (totalAdded > 0)
+                    {
+                        var counts = GetCounts();
+                        MelonLogger.Msg($"[SpeechEventPoolManager] Deferred injection: {totalAdded} events into " +
+                                        $"PlayerId='{playerId}' [pool: {counts.pending}P/{counts.injected}I/{counts.fallback}F, " +
+                                        $"disconnected cache: {_disconnectedCache.Count}]");
+                    }
+                }
+            }
+
+            // === Deferred PlayerName updates (events claimed before PlayerId was set) ===
             if (_deferredNameUpdates.Count == 0) return;
 
             for (int i = _deferredNameUpdates.Count - 1; i >= 0; i--)
@@ -376,6 +487,21 @@ namespace MimesisPersistence
                 }
             }
             return (pending, injected, fallback);
+        }
+
+        /// <summary>
+        /// Get all PENDING events (loaded from disk but not matched to any archive this session).
+        /// Used during save to preserve events for players who didn't join this session.
+        /// </summary>
+        public static List<SpeechEvent> GetPendingEvents()
+        {
+            var pending = new List<SpeechEvent>();
+            foreach (var entry in _pool.Values)
+            {
+                if (entry.state == EventState.Pending)
+                    pending.Add(entry.ev);
+            }
+            return pending;
         }
 
         /// <summary>
@@ -589,6 +715,7 @@ namespace MimesisPersistence
             _byPlayerName.Clear();
             _steamToDissonance.Clear();
             _deferredNameUpdates.Clear();
+            _deferredInjectionArchives.Clear();
             _disconnectedCache.Clear();
             _disconnectedPlayerMappings.Clear();
             _loadedSlotId = -1;
